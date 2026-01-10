@@ -32,12 +32,8 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 120000);
-
 const { agentName, agentConfig } = resolveAgentConfig();
 const AGENT_LABEL = getAgentLabel(agentName, agentConfig);
-const AGENT_TIMEOUT_MS = Number(agentConfig.timeoutMs || agentConfig.timeout_ms || CODEX_TIMEOUT_MS);
-const AGENT_TIMEOUT_SAFE_MS = Number.isFinite(AGENT_TIMEOUT_MS) ? AGENT_TIMEOUT_MS : CODEX_TIMEOUT_MS;
 
 const PARAKEET_CMD = process.env.PARAKEET_CMD || 'parakeet-mlx';
 const PARAKEET_MODEL = process.env.PARAKEET_MODEL;
@@ -202,9 +198,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   ].join(' ');
   console.log('[agent] command:', command);
 
-  const output = await execLocal('bash', ['-lc', command], {
-    timeout: AGENT_TIMEOUT_SAFE_MS,
-  });
+  const output = await execLocal('bash', ['-lc', command]);
   const parsed = parseAgentOutput(output, agentConfig);
   if (parsed.threadId) {
     threads.set(chatId, parsed.threadId);
