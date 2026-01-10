@@ -139,10 +139,13 @@ function buildCodexCommand(prompt, threadId, agentConfig, sessionValue, promptEx
   const argsRaw = agentConfig.args || '';
 
   if (template) {
-    if (template.includes('{prompt}')) {
-      return buildFromTemplate(template, promptValue, sessionValue);
+    const hasPrompt = template.includes('{prompt}');
+    const hasSession = template.includes('{session}');
+    const base = hasPrompt || hasSession ? buildFromTemplate(template, promptValue, sessionValue) : template.trim();
+    if (hasPrompt) {
+      return base;
     }
-    return `${template} ${promptValue}`.trim();
+    return `${base} ${promptValue}`.trim();
   }
 
   let args = normalizeExecArgs(argsRaw);
@@ -162,10 +165,13 @@ function buildGenericCommand(prompt, agentConfig, sessionValue, promptExpression
   const cmd = agentConfig.cmd || '';
   const argsRaw = agentConfig.args || '';
   if (template) {
-    if (template.includes('{prompt}')) {
-      return buildFromTemplate(template, promptValue, sessionValue);
+    const hasPrompt = template.includes('{prompt}');
+    const hasSession = template.includes('{session}');
+    const base = hasPrompt || hasSession ? buildFromTemplate(template, promptValue, sessionValue) : template.trim();
+    if (hasPrompt) {
+      return base;
     }
-    return `${template} ${promptValue}`.trim();
+    return `${base} ${promptValue}`.trim();
   }
   return `${cmd} ${argsRaw} ${promptValue}`.trim();
 }
