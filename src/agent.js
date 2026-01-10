@@ -1,4 +1,5 @@
 const path = require('path');
+const os = require('os');
 const { existsSync, readFileSync } = require('fs');
 
 const CODEX_CMD = process.env.CODEX_CMD || 'codex';
@@ -6,7 +7,9 @@ const DEFAULT_CODEX_ARGS = CODEX_CMD === 'codex' ? '--json --skip-git-repo-check
 const CODEX_ARGS = process.env.CODEX_ARGS || DEFAULT_CODEX_ARGS;
 const CODEX_TEMPLATE = process.env.CODEX_TEMPLATE || '';
 
-const CONFIG_PATH = process.env.BOT_CONFIG_PATH || path.join(process.cwd(), 'config.json');
+const XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+const DEFAULT_CONFIG_PATH = path.join(XDG_CONFIG_HOME, 'aipal', 'config.json');
+const CONFIG_PATH = process.env.BOT_CONFIG_PATH || DEFAULT_CONFIG_PATH;
 
 function loadJsonConfig(configPath) {
   if (!configPath || !existsSync(configPath)) return {};

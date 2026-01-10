@@ -20,7 +20,7 @@ cp .env.example .env
 Edit `.env` and set `TELEGRAM_BOT_TOKEN` (BotFather).
 
 Optional variables (defaults in `.env.example`):
-- `BOT_CONFIG_PATH`: path to a JSON config (defaults to `./config.json` if present).
+- `BOT_CONFIG_PATH`: path to a JSON config (defaults to `~/.config/aipal/config.json` or `$XDG_CONFIG_HOME/aipal/config.json`).
 - `AGENT`: agent key to use when JSON config is missing or does not specify one.
 - `TMUX_SESSION_PREFIX`: per-chat session prefix.
 - `TMUX_LINES`: captured pane lines (e.g. `-5000`).
@@ -33,7 +33,7 @@ Optional variables (defaults in `.env.example`):
 - `IMAGE_CLEANUP_INTERVAL_MS`: cleanup interval (default: 3600000 / 1h).
 
 ### Agent config (JSON)
-Create `config.json` (or point `BOT_CONFIG_PATH` to another file) to pick the agent and its command.
+Create `~/.config/aipal/config.json` (or point `BOT_CONFIG_PATH` to another file) to pick the agent and its command.
 
 Example:
 ```json
@@ -82,7 +82,7 @@ Templates can use `{model}` and `{thinking}` placeholders. If omitted, the bot a
 npm start
 ```
 In Telegram: send text or audio. Use `/reset` to clear context and kill the tmux session for that chat.
-Use `/model <name>` and `/thinking <level>` to set global options (persisted to `config.json`).
+Use `/model <name>` and `/thinking <level>` to set global options (persisted to the config file).
 
 ## How it works
 - Creates a tmux session per chat (`codexbot-<chatId>`)

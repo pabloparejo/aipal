@@ -1,7 +1,10 @@
 const path = require('path');
+const os = require('os');
 const fs = require('fs/promises');
 
-const CONFIG_PATH = process.env.BOT_CONFIG_PATH || path.join(process.cwd(), 'config.json');
+const XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+const DEFAULT_CONFIG_PATH = path.join(XDG_CONFIG_HOME, 'aipal', 'config.json');
+const CONFIG_PATH = process.env.BOT_CONFIG_PATH || DEFAULT_CONFIG_PATH;
 
 async function readConfig() {
   try {
