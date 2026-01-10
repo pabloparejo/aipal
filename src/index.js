@@ -32,8 +32,6 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const TMUX_SESSION_PREFIX = process.env.TMUX_SESSION_PREFIX || 'codexbot';
-const TMUX_LINES = process.env.TMUX_LINES || '-5000';
 const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 120000);
 
 const { agentName, agentConfig } = resolveAgentConfig();
@@ -70,18 +68,6 @@ function shellQuote(value) {
   return `'${escaped}'`;
 }
 
-function execTmux(args) {
-  return new Promise((resolve, reject) => {
-    execFile('tmux', args, { encoding: 'utf8' }, (err, stdout, stderr) => {
-      if (err) {
-        err.stderr = stderr;
-        return reject(err);
-      }
-      resolve(stdout || '');
-    });
-  });
-}
-
 function execLocal(cmd, args, options = {}) {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { encoding: 'utf8', ...options }, (err, stdout, stderr) => {
@@ -92,45 +78,6 @@ function execLocal(cmd, args, options = {}) {
       resolve(stdout || '');
     });
   });
-}
-
-async function ensureSession(session) {
-  try {
-    await execTmux(['has-session', '-t', session]);
-  } catch {
-    await execTmux(['new-session', '-d', '-s', session]);
-  }
-}
-
-function buildSessionName(chatId) {
-  return `${TMUX_SESSION_PREFIX}-${chatId}`;
-}
-
-async function sendCommand(session, command) {
-  await execTmux(['send-keys', '-t', session, command, 'C-m']);
-}
-
-async function capturePane(session) {
-  return execTmux(['capture-pane', '-pt', session, '-S', TMUX_LINES]);
-}
-
-async function waitForMarkers(session, begin, end, timeoutMs, label) {
-  const beginMarker = `\n${begin}\n`;
-  const endMarker = `\n${end}\n`;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const output = await capturePane(session);
-    const beginIdx = output.lastIndexOf(beginMarker);
-    if (beginIdx !== -1) {
-      const endIdx = output.indexOf(endMarker, beginIdx + beginMarker.length);
-      if (endIdx !== -1) {
-        const between = output.slice(beginIdx + beginMarker.length, endIdx);
-        return between.replace(/^\n+/, '').replace(/\n+$/, '');
-      }
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error(`Timeout waiting for ${label} response`);
 }
 
 async function replyWithError(ctx, label, err) {
@@ -237,12 +184,6 @@ function startImageCleanup() {
 }
 
 async function runAgentForChat(chatId, prompt, options = {}) {
-  const session = buildSessionName(chatId);
-  await ensureSession(session);
-
-  const uuid = randomUUID();
-  const begin = `<<<BEGIN:${uuid}>>>`;
-  const end = `<<<END:${uuid}>>>`;
   const threadId = threads.get(chatId);
   const model = globalModel;
   const thinking = globalThinking;
@@ -257,13 +198,13 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   const command = [
     `PROMPT_B64=${shellQuote(promptBase64)};`,
     'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
-    `printf '\\n${begin}\\n';`,
-    `${agentCmd};`,
-    `printf '\\n${end}\\n'`,
+    `${agentCmd}`,
   ].join(' ');
+  console.log('[agent] command:', command);
 
-  await sendCommand(session, command);
-  const output = await waitForMarkers(session, begin, end, AGENT_TIMEOUT_SAFE_MS, AGENT_LABEL);
+  const output = await execLocal('bash', ['-lc', command], {
+    timeout: AGENT_TIMEOUT_SAFE_MS,
+  });
   const parsed = parseAgentOutput(output, agentConfig);
   if (parsed.threadId) {
     threads.set(chatId, parsed.threadId);
@@ -352,14 +293,8 @@ bot.command('thinking', async (ctx) => {
 });
 
 bot.command('reset', async (ctx) => {
-  const session = buildSessionName(ctx.chat.id);
   threads.delete(ctx.chat.id);
-  try {
-    await execTmux(['kill-session', '-t', session]);
-    ctx.reply('Session reset.');
-  } catch {
-    ctx.reply('No active session.');
-  }
+  ctx.reply('Session reset.');
 });
 
 bot.on('text', (ctx) => {
