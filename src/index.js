@@ -25,6 +25,32 @@ const {
   buildPrompt,
 } = require('./message-utils');
 
+function formatLogTimestamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hour = pad(date.getHours());
+  const minute = pad(date.getMinutes());
+  const second = pad(date.getSeconds());
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function installLogTimestamps() {
+  const levels = ['log', 'info', 'warn', 'error'];
+  const original = {};
+  for (const level of levels) {
+    original[level] = console[level].bind(console);
+  }
+  for (const level of levels) {
+    console[level] = (...args) => {
+      original[level](`[${formatLogTimestamp()}]`, ...args);
+    };
+  }
+}
+
+installLogTimestamps();
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
   console.error('Missing TELEGRAM_BOT_TOKEN');
@@ -42,10 +68,18 @@ const IMAGE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 const SCRIPTS_DIR =
   process.env.AIPAL_SCRIPTS_DIR ||
-  process.env.AIBOT_SCRIPTS_DIR ||
-  path.join(os.homedir(), '.config', 'aibot', 'scripts');
-const SCRIPT_TIMEOUT_MS = Number(
-  process.env.AIPAL_SCRIPT_TIMEOUT_MS || process.env.AIBOT_SCRIPT_TIMEOUT_MS || 120000
+  path.join(os.homedir(), '.config', 'aipal', 'scripts');
+const SCRIPT_TIMEOUT_MS = readNumberEnv(
+  process.env.AIPAL_SCRIPT_TIMEOUT_MS,
+  120000
+);
+const AGENT_TIMEOUT_MS = readNumberEnv(
+  process.env.AIPAL_AGENT_TIMEOUT_MS,
+  600000
+);
+const AGENT_MAX_BUFFER = readNumberEnv(
+  process.env.AIPAL_AGENT_MAX_BUFFER,
+  10 * 1024 * 1024
 );
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
@@ -56,6 +90,16 @@ const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalModel;
 let globalThinking;
+
+bot.catch((err) => {
+  console.error('Bot error', err);
+});
+
+function readNumberEnv(raw, fallback) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return value;
+}
 
 async function hydrateGlobalSettings() {
   const config = await readConfig();
@@ -69,10 +113,17 @@ function shellQuote(value) {
 }
 
 function execLocal(cmd, args, options = {}) {
+  const { timeout, maxBuffer, ...rest } = options;
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { encoding: 'utf8', ...options }, (err, stdout, stderr) => {
+    execFile(cmd, args, { encoding: 'utf8', timeout, maxBuffer, ...rest }, (err, stdout, stderr) => {
       if (err) {
         err.stderr = stderr;
+        if (timeout && err.killed) {
+          const timeoutErr = new Error(`Command timed out after ${timeout}ms`);
+          timeoutErr.code = 'ETIMEDOUT';
+          timeoutErr.stderr = stderr;
+          return reject(timeoutErr);
+        }
         return reject(err);
       }
       resolve(stdout || '');
@@ -289,7 +340,18 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     `${agentCmd}`,
   ].join(' ');
 
-  const output = await execLocal('bash', ['-lc', command]);
+  const startedAt = Date.now();
+  console.info(`Agent start chat=${chatId} thread=${threadId || 'new'}`);
+  let output;
+  try {
+    output = await execLocal('bash', ['-lc', command], {
+      timeout: AGENT_TIMEOUT_MS,
+      maxBuffer: AGENT_MAX_BUFFER,
+    });
+  } finally {
+    const elapsedMs = Date.now() - startedAt;
+    console.info(`Agent finished chat=${chatId} durationMs=${elapsedMs}`);
+  }
   const parsed = parseAgentOutput(output);
   if (parsed.threadId) {
     threads.set(chatId, parsed.threadId);
