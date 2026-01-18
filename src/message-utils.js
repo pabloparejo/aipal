@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const path = require('path');
 
 function chunkText(text, size) {
@@ -222,9 +223,20 @@ function getDocumentPayload(message) {
   };
 }
 
+function resolvePathSafely(targetPath) {
+  if (!targetPath) return '';
+  try {
+    return fs.realpathSync.native(targetPath);
+  } catch {
+    return path.resolve(targetPath);
+  }
+}
+
 function isPathInside(baseDir, candidatePath) {
-  const base = path.resolve(baseDir);
-  const target = path.resolve(candidatePath);
+  if (!baseDir || !candidatePath) return false;
+  const base = resolvePathSafely(baseDir);
+  const target = resolvePathSafely(candidatePath);
+  if (!base || !target) return false;
   if (base === target) return true;
   return target.startsWith(base + path.sep);
 }

@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -43,6 +44,29 @@ test('isPathInside detects containment', () => {
   const baseDir = path.join(os.tmpdir(), 'aipal-test');
   assert.equal(isPathInside(baseDir, path.join(baseDir, 'file.txt')), true);
   assert.equal(isPathInside(baseDir, path.join(os.tmpdir(), 'other.txt')), false);
+});
+
+test('isPathInside handles symlinked base paths', () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aipal-symlink-'));
+  const targetFile = path.join(baseDir, 'file.txt');
+  fs.writeFileSync(targetFile, 'ok');
+  const linkDir = `${baseDir}-link`;
+  fs.symlinkSync(baseDir, linkDir, 'dir');
+  try {
+    assert.equal(isPathInside(linkDir, targetFile), true);
+    assert.equal(isPathInside(linkDir, path.join(linkDir, 'file.txt')), true);
+  } finally {
+    try {
+      if (fs.lstatSync(linkDir).isSymbolicLink()) {
+        fs.unlinkSync(linkDir);
+      } else {
+        fs.rmSync(linkDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore cleanup errors in temp dirs.
+    }
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  }
 });
 
 test('buildPrompt includes image hints', () => {
