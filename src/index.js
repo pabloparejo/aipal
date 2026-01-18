@@ -542,10 +542,10 @@ bot.on('text', (ctx) => {
   });
 });
 
-bot.on(['voice', 'audio', 'document'], (ctx) => {
+bot.on(['voice', 'audio', 'document'], (ctx, next) => {
   const chatId = ctx.chat.id;
   const payload = getAudioPayload(ctx.message);
-  if (!payload) return;
+  if (!payload) return next();
 
   enqueue(chatId, async () => {
     const stopTyping = startTyping(ctx);
@@ -584,10 +584,10 @@ bot.on(['voice', 'audio', 'document'], (ctx) => {
   });
 });
 
-bot.on(['photo', 'document'], (ctx) => {
+bot.on(['photo', 'document'], (ctx, next) => {
   const chatId = ctx.chat.id;
   const payload = getImagePayload(ctx.message);
-  if (!payload) return;
+  if (!payload) return next();
 
   enqueue(chatId, async () => {
     const stopTyping = startTyping(ctx);
