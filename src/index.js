@@ -11,8 +11,10 @@ const { buildAgentCommand, parseAgentOutput, getAgentLabel } = require('./agent'
 const {
   CONFIG_PATH,
   MEMORY_PATH,
+  SOUL_PATH,
   readConfig,
   readMemory,
+  readSoul,
   updateConfig,
 } = require('./config-store');
 const {
@@ -114,12 +116,19 @@ function readNumberEnv(raw, fallback) {
 }
 
 async function buildBootstrapContext() {
+  const soul = await readSoul();
   const memory = await readMemory();
   const lines = [
     'Bootstrap config:',
     `Config JSON: ${CONFIG_PATH}`,
+    `Soul file: ${SOUL_PATH}`,
     `Memory file: ${MEMORY_PATH}`,
   ];
+  if (soul.exists && soul.content) {
+    lines.push('Soul (soul.md):');
+    lines.push(soul.content);
+    lines.push('End of soul.');
+  }
   if (memory.exists && memory.content) {
     lines.push('Memory (memory.md):');
     lines.push(memory.content);

@@ -6,6 +6,7 @@ const XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '
 const CONFIG_PATH = path.join(XDG_CONFIG_HOME, 'aipal', 'config.json');
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const MEMORY_PATH = path.join(CONFIG_DIR, 'memory.md');
+const SOUL_PATH = path.join(CONFIG_DIR, 'soul.md');
 
 async function readConfig() {
   try {
@@ -39,6 +40,19 @@ async function readMemory() {
   }
 }
 
+async function readSoul() {
+  try {
+    const raw = await fs.readFile(SOUL_PATH, 'utf8');
+    return { path: SOUL_PATH, content: raw.trim(), exists: true };
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      return { path: SOUL_PATH, content: '', exists: false };
+    }
+    console.warn('Failed to load soul.md:', err);
+    return { path: SOUL_PATH, content: '', exists: false };
+  }
+}
+
 async function updateConfig(patch) {
   const current = await readConfig();
   const next = { ...current, ...patch };
@@ -50,7 +64,9 @@ module.exports = {
   CONFIG_DIR,
   CONFIG_PATH,
   MEMORY_PATH,
+  SOUL_PATH,
   readConfig,
   readMemory,
+  readSoul,
   updateConfig,
 };

@@ -1,4 +1,4 @@
-# Configuration (config.json + memory.md)
+# Configuration (config.json + memory.md + soul.md)
 
 This bot stores a minimal JSON config with the values set by `/model` and `/thinking`.
 
@@ -26,3 +26,10 @@ If `memory.md` exists alongside `config.json`, its contents are injected into th
 Location:
 - `~/.config/aipal/memory.md`
 - If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/memory.md`
+
+## Soul file (optional)
+If `soul.md` exists alongside `config.json`, its contents are injected into the very first prompt of a new conversation, before `memory.md`.
+
+Location:
+- `~/.config/aipal/soul.md`
+- If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/soul.md`

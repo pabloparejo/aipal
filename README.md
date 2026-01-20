@@ -81,11 +81,11 @@ Example:
 
 See `docs/configuration.md` for details.
 
-## Memory file (optional)
-If `memory.md` exists next to `config.json`, its contents are injected into the first prompt of a new conversation.
+## Memory + soul files (optional)
+If `soul.md` and/or `memory.md` exist next to `config.json`, their contents are injected into the first prompt of a new conversation (`soul.md` first, then `memory.md`).
 
 Location:
-`~/.config/aipal/memory.md` (or `$XDG_CONFIG_HOME/aipal/memory.md`).
+`~/.config/aipal/soul.md` and `~/.config/aipal/memory.md` (or under `$XDG_CONFIG_HOME/aipal/`).
 
 ## Security notes
 This bot executes local commands on your machine. Run it only on trusted hardware, keep the bot private, and avoid sharing the token. There is no built-in allowlist: anyone who can message the bot can execute the configured command.

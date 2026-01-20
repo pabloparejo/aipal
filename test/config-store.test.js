@@ -46,3 +46,23 @@ test('readMemory loads memory content', async () => {
   assert.equal(memory.content, 'hello memory');
   assert.equal(memory.path, MEMORY_PATH);
 });
+
+test('readSoul returns missing state when soul file does not exist', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-config-'));
+  const { readSoul } = loadConfigStore(dir);
+  const soul = await readSoul();
+  assert.equal(soul.exists, false);
+  assert.equal(soul.content, '');
+  assert.match(soul.path, /soul\.md$/);
+});
+
+test('readSoul loads soul content', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-config-'));
+  const { readSoul, SOUL_PATH } = loadConfigStore(dir);
+  await fs.mkdir(path.dirname(SOUL_PATH), { recursive: true });
+  await fs.writeFile(SOUL_PATH, 'hello soul');
+  const soul = await readSoul();
+  assert.equal(soul.exists, true);
+  assert.equal(soul.content, 'hello soul');
+  assert.equal(soul.path, SOUL_PATH);
+});
