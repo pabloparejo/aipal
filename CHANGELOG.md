@@ -12,5 +12,12 @@ All notable changes to this project will be documented in this file.
 ### Documentation
 - Update local agent notes.
 
+## [0.1.4] - 2026-01-20
+### Added
+- Load optional memory.md into the first prompt of a new conversation.
+
+### Documentation
+- Document memory.md alongside config.json.
+
 ## [0.1.2] - 2026-01-13
 - Earlier changes were tracked only in GitHub releases.

@@ -8,7 +8,13 @@ const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const { buildAgentCommand, parseAgentOutput, getAgentLabel } = require('./agent');
-const { readConfig, updateConfig } = require('./config-store');
+const {
+  CONFIG_PATH,
+  MEMORY_PATH,
+  readConfig,
+  readMemory,
+  updateConfig,
+} = require('./config-store');
 const {
   chunkText,
   formatError,
@@ -105,6 +111,21 @@ function readNumberEnv(raw, fallback) {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return value;
+}
+
+async function buildBootstrapContext() {
+  const memory = await readMemory();
+  const lines = [
+    'Bootstrap config:',
+    `Config JSON: ${CONFIG_PATH}`,
+    `Memory file: ${MEMORY_PATH}`,
+  ];
+  if (memory.exists && memory.content) {
+    lines.push('Memory (memory.md):');
+    lines.push(memory.content);
+    lines.push('End of memory.');
+  }
+  return lines.join('\n');
 }
 
 async function hydrateGlobalSettings() {
@@ -337,10 +358,17 @@ function startDocumentCleanup() {
 
 async function runAgentForChat(chatId, prompt, options = {}) {
   const threadId = threads.get(chatId);
+  let promptWithContext = prompt;
+  if (!threadId) {
+    const bootstrap = await buildBootstrapContext();
+    promptWithContext = promptWithContext
+      ? `${bootstrap}\n\n${promptWithContext}`
+      : bootstrap;
+  }
   const model = globalModel;
   const thinking = globalThinking;
   const finalPrompt = buildPrompt(
-    prompt,
+    promptWithContext,
     options.imagePaths || [],
     IMAGE_DIR,
     options.scriptContext,

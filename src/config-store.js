@@ -4,6 +4,8 @@ const fs = require('fs/promises');
 
 const XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
 const CONFIG_PATH = path.join(XDG_CONFIG_HOME, 'aipal', 'config.json');
+const CONFIG_DIR = path.dirname(CONFIG_PATH);
+const MEMORY_PATH = path.join(CONFIG_DIR, 'memory.md');
 
 async function readConfig() {
   try {
@@ -18,11 +20,23 @@ async function readConfig() {
 }
 
 async function writeConfig(config) {
-  const dir = path.dirname(CONFIG_PATH);
-  await fs.mkdir(dir, { recursive: true });
+  await fs.mkdir(CONFIG_DIR, { recursive: true });
   const tmpPath = `${CONFIG_PATH}.tmp`;
   await fs.writeFile(tmpPath, JSON.stringify(config, null, 2));
   await fs.rename(tmpPath, CONFIG_PATH);
+}
+
+async function readMemory() {
+  try {
+    const raw = await fs.readFile(MEMORY_PATH, 'utf8');
+    return { path: MEMORY_PATH, content: raw.trim(), exists: true };
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      return { path: MEMORY_PATH, content: '', exists: false };
+    }
+    console.warn('Failed to load memory.md:', err);
+    return { path: MEMORY_PATH, content: '', exists: false };
+  }
 }
 
 async function updateConfig(patch) {
@@ -33,7 +47,10 @@ async function updateConfig(patch) {
 }
 
 module.exports = {
+  CONFIG_DIR,
   CONFIG_PATH,
+  MEMORY_PATH,
   readConfig,
+  readMemory,
   updateConfig,
 };

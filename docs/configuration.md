@@ -1,4 +1,4 @@
-# Configuration (config.json)
+# Configuration (config.json + memory.md)
 
 This bot stores a minimal JSON config with the values set by `/model` and `/thinking`.
 
@@ -19,3 +19,10 @@ This bot stores a minimal JSON config with the values set by `/model` and `/thin
 - `thinking`: default reasoning effort (used as `model_reasoning_effort` in Codex).
 
 If the file is missing, both values are unset and the bot uses agent defaults.
+
+## Memory file (optional)
+If `memory.md` exists alongside `config.json`, its contents are injected into the very first prompt of a new conversation (i.e. when there is no active session/thread).
+
+Location:
+- `~/.config/aipal/memory.md`
+- If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/memory.md`
