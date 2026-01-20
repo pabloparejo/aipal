@@ -7,7 +7,13 @@ const { constants: fsConstants } = require('fs');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { buildAgentCommand, parseAgentOutput, getAgentLabel } = require('./agent');
+const {
+  AGENT_CODEX,
+  getAgent,
+  getAgentLabel,
+  isKnownAgent,
+  normalizeAgent,
+} = require('./agents');
 const {
   CONFIG_PATH,
   MEMORY_PATH,
@@ -67,7 +73,6 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const AGENT_LABEL = getAgentLabel();
 
 const PARAKEET_CMD = 'parakeet-mlx';
 const PARAKEET_TIMEOUT_MS = 120000;
@@ -104,6 +109,7 @@ const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalModel;
 let globalThinking;
+let globalAgent = AGENT_CODEX;
 
 bot.catch((err) => {
   console.error('Bot error', err);
@@ -141,11 +147,17 @@ async function hydrateGlobalSettings() {
   const config = await readConfig();
   if (config.model) globalModel = config.model;
   if (config.thinking) globalThinking = config.thinking;
+  if (config.agent) globalAgent = normalizeAgent(config.agent);
 }
 
 function shellQuote(value) {
   const escaped = String(value).replace(/'/g, String.raw`'\''`);
   return `'${escaped}'`;
+}
+
+function wrapCommandWithPty(command) {
+  const python = 'import pty,sys; pty.spawn(["bash","-lc", sys.argv[1]])';
+  return `python3 -c ${shellQuote(python)} ${shellQuote(command)}`;
 }
 
 function execLocal(cmd, args, options = {}) {
@@ -367,6 +379,7 @@ function startDocumentCleanup() {
 
 async function runAgentForChat(chatId, prompt, options = {}) {
   const threadId = threads.get(chatId);
+  const agent = getAgent(globalAgent);
   let promptWithContext = prompt;
   if (!threadId) {
     const bootstrap = await buildBootstrapContext();
@@ -386,9 +399,10 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   );
   const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
   const promptExpression = '"$PROMPT"';
-  const agentCmd = buildAgentCommand(finalPrompt, {
-    threadId,
+  const agentCmd = agent.buildCommand({
+    prompt: finalPrompt,
     promptExpression,
+    threadId,
     model,
     thinking,
   });
@@ -397,12 +411,19 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
     `${agentCmd}`,
   ].join(' ');
+  let commandToRun = command;
+  if (agent.needsPty) {
+    commandToRun = wrapCommandWithPty(commandToRun);
+  }
+  if (agent.mergeStderr) {
+    commandToRun = `${commandToRun} 2>&1`;
+  }
 
   const startedAt = Date.now();
   console.info(`Agent start chat=${chatId} thread=${threadId || 'new'}`);
   let output;
   try {
-    output = await execLocal('bash', ['-lc', command], {
+    output = await execLocal('bash', ['-lc', commandToRun], {
       timeout: AGENT_TIMEOUT_MS,
       maxBuffer: AGENT_MAX_BUFFER,
     });
@@ -410,7 +431,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     const elapsedMs = Date.now() - startedAt;
     console.info(`Agent finished chat=${chatId} durationMs=${elapsedMs}`);
   }
-  const parsed = parseAgentOutput(output);
+  const parsed = agent.parseOutput(output);
   if (parsed.threadId) {
     threads.set(chatId, parsed.threadId);
   }
@@ -492,7 +513,7 @@ function enqueue(chatId, fn) {
   return next;
 }
 
-bot.start((ctx) => ctx.reply(`Ready. Send a message and I will pass it to ${AGENT_LABEL}.`));
+bot.start((ctx) => ctx.reply(`Ready. Send a message and I will pass it to ${getAgentLabel(globalAgent)}.`));
 
 bot.command('model', async (ctx) => {
   const value = extractCommandValue(ctx.message.text);
@@ -534,6 +555,31 @@ bot.command('thinking', async (ctx) => {
   }
 });
 
+bot.command('agent', async (ctx) => {
+  const value = extractCommandValue(ctx.message.text);
+  if (!value) {
+    ctx.reply(`Current agent: ${getAgentLabel(globalAgent)}. Use /agent codex|claude.`);
+    return;
+  }
+  if (!isKnownAgent(value)) {
+    ctx.reply('Unknown agent. Use /agent codex|claude.');
+    return;
+  }
+  const normalized = normalizeAgent(value);
+  try {
+    const changed = normalized !== globalAgent;
+    globalAgent = normalized;
+    await updateConfig({ agent: normalized });
+    if (changed) {
+      threads.clear();
+    }
+    ctx.reply(`Agent set to ${getAgentLabel(globalAgent)}.`);
+  } catch (err) {
+    console.error(err);
+    await replyWithError(ctx, 'Failed to persist agent setting.', err);
+  }
+});
+
 bot.command('reset', async (ctx) => {
   threads.delete(ctx.chat.id);
   ctx.reply('Session reset.');
@@ -547,7 +593,7 @@ bot.on('text', (ctx) => {
   const slash = parseSlashCommand(text);
   if (slash) {
     const normalized = slash.name.toLowerCase();
-    if (['start', 'model', 'thinking', 'reset'].includes(normalized)) return;
+    if (['start', 'model', 'thinking', 'agent', 'reset'].includes(normalized)) return;
     enqueue(chatId, async () => {
       const stopTyping = startTyping(ctx);
       try {

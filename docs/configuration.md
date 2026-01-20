@@ -1,6 +1,6 @@
 # Configuration (config.json + memory.md + soul.md)
 
-This bot stores a minimal JSON config with the values set by `/model` and `/thinking`.
+This bot stores a minimal JSON config with the values set by `/model`, `/thinking`, and `/agent`.
 
 ## Location
 - `~/.config/aipal/config.json`
@@ -9,6 +9,7 @@ This bot stores a minimal JSON config with the values set by `/model` and `/thin
 ## Schema
 ```json
 {
+  "agent": "codex",
   "model": "gpt-5.2",
   "thinking": "medium"
 }
@@ -17,6 +18,7 @@ This bot stores a minimal JSON config with the values set by `/model` and `/thin
 ## Fields
 - `model`: default model name.
 - `thinking`: default reasoning effort (used as `model_reasoning_effort` in Codex).
+- `agent`: which CLI to run (`codex` or `claude`).
 
 If the file is missing, both values are unset and the bot uses agent defaults.
 

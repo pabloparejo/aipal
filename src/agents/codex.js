@@ -1,17 +1,9 @@
+const { shellQuote, resolvePromptValue } = require('./utils');
+
 const CODEX_CMD = 'codex';
 const BASE_ARGS = '--json --skip-git-repo-check --yolo';
 const MODEL_ARG = '--model';
 const REASONING_CONFIG_KEY = 'model_reasoning_effort';
-
-function shellQuote(value) {
-  const escaped = String(value).replace(/'/g, String.raw`'\''`);
-  return `'${escaped}'`;
-}
-
-function resolvePromptValue(prompt, promptExpression) {
-  if (promptExpression) return promptExpression;
-  return shellQuote(prompt);
-}
 
 function appendOptionalArg(args, flag, value) {
   if (!flag || !value) return args;
@@ -24,8 +16,7 @@ function appendOptionalReasoning(args, value) {
   return `${args} --config ${shellQuote(configValue)}`.trim();
 }
 
-function buildAgentCommand(prompt, options = {}) {
-  const { threadId, promptExpression, model, thinking } = options;
+function buildCommand({ prompt, promptExpression, threadId, model, thinking }) {
   const promptValue = resolvePromptValue(prompt, promptExpression);
   let args = BASE_ARGS;
   args = appendOptionalArg(args, MODEL_ARG, model);
@@ -36,8 +27,8 @@ function buildAgentCommand(prompt, options = {}) {
   return `${CODEX_CMD} exec ${args} ${promptValue}`.trim();
 }
 
-function parseCodexJsonOutput(output) {
-  const lines = output.split(/\r?\n/);
+function parseOutput(output) {
+  const lines = String(output || '').split(/\r?\n/);
   let threadId;
   const messages = [];
   let sawJson = false;
@@ -74,16 +65,11 @@ function parseCodexJsonOutput(output) {
   return { text, threadId, sawJson };
 }
 
-function parseAgentOutput(output) {
-  return parseCodexJsonOutput(output);
-}
-
-function getAgentLabel() {
-  return 'codex';
-}
-
 module.exports = {
-  buildAgentCommand,
-  parseAgentOutput,
-  getAgentLabel,
+  id: 'codex',
+  label: 'codex',
+  needsPty: false,
+  mergeStderr: false,
+  buildCommand,
+  parseOutput,
 };
