@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const { randomUUID } = require('crypto');
 const path = require('path');
 const fs = require('fs/promises');
 const { CONFIG_DIR } = require('./config-store');
@@ -20,7 +21,7 @@ async function loadCronJobs() {
 
 async function saveCronJobs(jobs) {
   await fs.mkdir(CONFIG_DIR, { recursive: true });
-  const tmpPath = `${CRON_PATH}.tmp`;
+  const tmpPath = `${CRON_PATH}.${randomUUID()}.tmp`;
   await fs.writeFile(tmpPath, JSON.stringify({ jobs }, null, 2));
   await fs.rename(tmpPath, CRON_PATH);
 }

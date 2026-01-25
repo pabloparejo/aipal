@@ -18,9 +18,11 @@ const {
   CONFIG_PATH,
   MEMORY_PATH,
   SOUL_PATH,
+  loadThreads,
   readConfig,
   readMemory,
   readSoul,
+  saveThreads,
   updateConfig,
 } = require('./config-store');
 const {
@@ -110,7 +112,8 @@ const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
 const bot = new Telegraf(BOT_TOKEN);
 const queues = new Map();
-const threads = new Map();
+let threads = new Map();
+let threadsPersist = Promise.resolve();
 const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalThinking;
@@ -124,6 +127,17 @@ function readNumberEnv(raw, fallback) {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return value;
+}
+
+function getThreadKey(chatId) {
+  return String(chatId);
+}
+
+function persistThreads() {
+  threadsPersist = threadsPersist
+    .catch(() => {})
+    .then(() => saveThreads(threads));
+  return threadsPersist;
 }
 
 async function buildBootstrapContext() {
@@ -384,7 +398,8 @@ function startDocumentCleanup() {
 }
 
 async function runAgentForChat(chatId, prompt, options = {}) {
-  const threadId = threads.get(chatId);
+  const threadKey = getThreadKey(chatId);
+  const threadId = threads.get(threadKey);
   const agent = getAgent(globalAgent);
   let promptWithContext = prompt;
   if (!threadId) {
@@ -461,7 +476,8 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     }
   }
   if (parsed.threadId) {
-    threads.set(chatId, parsed.threadId);
+    threads.set(threadKey, parsed.threadId);
+    persistThreads().catch((err) => console.warn('Failed to persist threads:', err));
   }
   if (parsed.sawJson) {
     return parsed.text || output;
@@ -579,6 +595,7 @@ bot.command('agent', async (ctx) => {
     await updateConfig({ agent: normalized });
     if (changed) {
       threads.clear();
+      await persistThreads();
     }
     ctx.reply(`Agent set to ${getAgentLabel(globalAgent)}.`);
   } catch (err) {
@@ -588,7 +605,8 @@ bot.command('agent', async (ctx) => {
 });
 
 bot.command('reset', async (ctx) => {
-  threads.delete(ctx.chat.id);
+  threads.delete(getThreadKey(ctx.chat.id));
+  persistThreads().catch((err) => console.warn('Failed to persist threads after reset:', err));
   ctx.reply('Session reset.');
 });
 
@@ -832,6 +850,12 @@ async function handleCronTrigger(chatId, prompt, options = {}) {
 
 startImageCleanup();
 startDocumentCleanup();
+loadThreads()
+  .then((loaded) => {
+    threads = loaded;
+    console.info(`Loaded ${threads.size} thread(s) from disk`);
+  })
+  .catch((err) => console.warn('Failed to load threads:', err));
 hydrateGlobalSettings()
   .then((config) => {
     if (config.cronChatId) {
