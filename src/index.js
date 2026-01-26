@@ -146,14 +146,16 @@ const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalThinking;
 let globalAgent = AGENT_CODEX;
+let globalModels = {};
 
 const scriptManager = new ScriptManager(SCRIPTS_DIR);
 
 bot.command('help', async (ctx) => {
   const builtIn = [
     '/start - Hello world',
-    '/agent <name> - Switch agent (codex, claude, gemini)',
+    '/agent <name> - Switch agent (codex, claude, gemini, opencode)',
     '/thinking <level> - Set reasoning effort',
+    '/model [model_id] - View/set model for current agent',
     '/reset - Reset session',
     '/cron [list|reload|chatid] - Manage cron jobs',
     '/help - Show this help',
@@ -313,6 +315,7 @@ let cronScheduler = null;
 async function hydrateGlobalSettings() {
   const config = await readConfig();
   if (config.agent) globalAgent = normalizeAgent(config.agent);
+  if (config.models) globalModels = { ...config.models };
   return config;
 }
 
@@ -332,10 +335,12 @@ function execLocal(cmd, args, options = {}) {
     execFile(cmd, args, { encoding: 'utf8', timeout, maxBuffer, ...rest }, (err, stdout, stderr) => {
       if (err) {
         err.stderr = stderr;
+        err.stdout = stdout;
         if (timeout && err.killed) {
           const timeoutErr = new Error(`Command timed out after ${timeout}ms`);
           timeoutErr.code = 'ETIMEDOUT';
           timeoutErr.stderr = stderr;
+          timeoutErr.stdout = stdout;
           return reject(timeoutErr);
         }
         return reject(err);
@@ -495,7 +500,7 @@ async function safeUnlink(filePath) {
   if (!filePath) return;
   try {
     await fs.unlink(filePath);
-  } catch {}
+  } catch { }
 }
 
 async function cleanupOldFiles(dir, maxAgeMs, label) {
@@ -573,17 +578,33 @@ async function runAgentOneShot(prompt) {
   const startedAt = Date.now();
   console.info(`Agent one-shot start agent=${getAgentLabel(globalAgent)}`);
   let output;
+  let execError;
   try {
     output = await execLocal('bash', ['-lc', commandToRun], {
       timeout: AGENT_TIMEOUT_MS,
       maxBuffer: AGENT_MAX_BUFFER,
     });
+  } catch (err) {
+    execError = err;
+    if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
+      output = err.stdout;
+    } else {
+      throw err;
+    }
   } finally {
     const elapsedMs = Date.now() - startedAt;
     console.info(`Agent one-shot finished durationMs=${elapsedMs}`);
   }
 
   const parsed = agent.parseOutput(output);
+  if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
+    throw execError;
+  }
+  if (execError) {
+    console.warn(
+      `Agent one-shot exited non-zero; returning stdout (code=${execError.code || 'unknown'})`
+    );
+  }
   return parsed.text || output;
 }
 
@@ -614,6 +635,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     promptExpression,
     threadId,
     thinking,
+    model: globalModels[globalAgent],
   });
   const command = [
     `PROMPT_B64=${shellQuote(promptBase64)};`,
@@ -631,16 +653,32 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   const startedAt = Date.now();
   console.info(`Agent start chat=${chatId} thread=${threadId || 'new'}`);
   let output;
+  let execError;
   try {
     output = await execLocal('bash', ['-lc', commandToRun], {
       timeout: AGENT_TIMEOUT_MS,
       maxBuffer: AGENT_MAX_BUFFER,
     });
+  } catch (err) {
+    execError = err;
+    if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
+      output = err.stdout;
+    } else {
+      throw err;
+    }
   } finally {
     const elapsedMs = Date.now() - startedAt;
     console.info(`Agent finished chat=${chatId} durationMs=${elapsedMs}`);
   }
   const parsed = agent.parseOutput(output);
+  if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
+    throw execError;
+  }
+  if (execError) {
+    console.warn(
+      `Agent exited non-zero; returning stdout chat=${chatId} code=${execError.code || 'unknown'}`
+    );
+  }
   if (!parsed.threadId && typeof agent.listSessionsCommand === 'function') {
     try {
       const listCommand = agent.listSessionsCommand();
@@ -771,11 +809,11 @@ bot.command('thinking', async (ctx) => {
 bot.command('agent', async (ctx) => {
   const value = extractCommandValue(ctx.message.text);
   if (!value) {
-    ctx.reply(`Current agent: ${getAgentLabel(globalAgent)}. Use /agent codex|claude|gemini.`);
+    ctx.reply(`Current agent: ${getAgentLabel(globalAgent)}. Use /agent codex|claude|gemini|opencode.`);
     return;
   }
   if (!isKnownAgent(value)) {
-    ctx.reply('Unknown agent. Use /agent codex|claude|gemini.');
+    ctx.reply('Unknown agent. Use /agent codex|claude|gemini|opencode.');
     return;
   }
   const normalized = normalizeAgent(value);
@@ -798,6 +836,55 @@ bot.command('reset', async (ctx) => {
   threads.delete(getThreadKey(ctx.chat.id));
   persistThreads().catch((err) => console.warn('Failed to persist threads after reset:', err));
   ctx.reply('Session reset.');
+});
+
+bot.command('model', async (ctx) => {
+  const value = extractCommandValue(ctx.message.text);
+  const agent = getAgent(globalAgent);
+
+  if (!value) {
+    const current = globalModels[globalAgent] || agent.defaultModel || '(default)';
+    let msg = `Current model for ${agent.label}: ${current}. Use /model <model_id> to change.`;
+
+    // Try to list available models if the agent supports it
+    if (typeof agent.listModelsCommand === 'function') {
+      const stopTyping = startTyping(ctx);
+      try {
+        const cmd = agent.listModelsCommand();
+        let cmdToRun = cmd;
+        if (agent.needsPty) cmdToRun = wrapCommandWithPty(cmdToRun);
+
+        const output = await execLocal('bash', ['-lc', cmdToRun], { timeout: 30000 }); // Short timeout for listing
+
+        // Use agent-specific parser if available, otherwise just dump output
+        let modelsList = output.trim();
+        if (typeof agent.parseModelList === 'function') {
+          modelsList = agent.parseModelList(modelsList);
+        }
+
+        if (modelsList) {
+          msg += `\n\nAvailable models:\n${modelsList}`;
+        }
+        stopTyping();
+      } catch (err) {
+        msg += `\n(Failed to list models: ${err.message})`;
+        stopTyping();
+      }
+    }
+
+    ctx.reply(msg);
+    return;
+  }
+
+  try {
+    globalModels[globalAgent] = value;
+    await updateConfig({ models: globalModels });
+
+    ctx.reply(`Model for ${agent.label} set to ${value}.`);
+  } catch (err) {
+    console.error(err);
+    await replyWithError(ctx, 'Failed to persist model setting.', err);
+  }
 });
 
 bot.command('cron', async (ctx) => {
@@ -849,7 +936,20 @@ bot.on('text', (ctx) => {
   const slash = parseSlashCommand(text);
   if (slash) {
     const normalized = slash.name.toLowerCase();
-    if (['start', 'thinking', 'agent', 'reset'].includes(normalized)) return;
+    if (
+      [
+        'start',
+        'thinking',
+        'agent',
+        'model',
+        'reset',
+        'cron',
+        'help',
+        'document_scripts',
+      ].includes(normalized)
+    ) {
+      return;
+    }
     enqueue(chatId, async () => {
       const stopTyping = startTyping(ctx);
       try {
