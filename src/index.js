@@ -964,6 +964,34 @@ bot.on('text', (ctx) => {
     ) {
       return;
     }
+    if (normalized === 'xbrief') {
+      enqueue(chatId, async () => {
+        const stopTyping = startTyping(ctx);
+        try {
+          const output = await runScriptCommand(slash.name, slash.args);
+          const scriptContext = formatScriptContext({
+            name: slash.name,
+            output,
+          });
+          const prompt = [
+            'Filtra el briefing para quedarte solo con IA y LLMs.',
+            'Elimina todo lo que no sea IA, sin inventar ni omitir lo relevante.',
+            'Fusiona duplicados (mismo link o mismo contenido).',
+            'Mantén todas las secciones, y conserva los links en formato [link](...).',
+            'Si una sección queda vacía, indícalo como "(Sin resultados)".',
+            'Responde en español, directo y sin relleno.',
+          ].join('\n');
+          const response = await runAgentForChat(chatId, prompt, { scriptContext });
+          stopTyping();
+          await replyWithResponse(ctx, response);
+        } catch (err) {
+          console.error(err);
+          stopTyping();
+          await replyWithError(ctx, `Error running /${slash.name}.`, err);
+        }
+      });
+      return;
+    }
     enqueue(chatId, async () => {
       const stopTyping = startTyping(ctx);
       try {
