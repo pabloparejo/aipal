@@ -9,6 +9,7 @@ const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const MEMORY_PATH = path.join(CONFIG_DIR, 'memory.md');
 const SOUL_PATH = path.join(CONFIG_DIR, 'soul.md');
 const THREADS_PATH = path.join(CONFIG_DIR, 'threads.json');
+const AGENT_OVERRIDES_PATH = path.join(CONFIG_DIR, 'agent-overrides.json');
 
 async function readConfig() {
   try {
@@ -83,16 +84,40 @@ async function saveThreads(threads) {
   await fs.rename(tmpPath, THREADS_PATH);
 }
 
+async function loadAgentOverrides() {
+  try {
+    const raw = await fs.readFile(AGENT_OVERRIDES_PATH, 'utf8');
+    if (!raw.trim()) return new Map();
+    const obj = JSON.parse(raw);
+    return new Map(Object.entries(obj));
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return new Map();
+    console.warn('Failed to load agent-overrides.json:', err);
+    return new Map();
+  }
+}
+
+async function saveAgentOverrides(overrides) {
+  await fs.mkdir(CONFIG_DIR, { recursive: true });
+  const obj = Object.fromEntries(overrides);
+  const tmpPath = `${AGENT_OVERRIDES_PATH}.${randomUUID()}.tmp`;
+  await fs.writeFile(tmpPath, JSON.stringify(obj, null, 2));
+  await fs.rename(tmpPath, AGENT_OVERRIDES_PATH);
+}
+
 module.exports = {
   CONFIG_DIR,
   CONFIG_PATH,
   MEMORY_PATH,
   SOUL_PATH,
   THREADS_PATH,
+  AGENT_OVERRIDES_PATH,
   loadThreads,
+  loadAgentOverrides,
   readConfig,
   readMemory,
   readSoul,
   saveThreads,
+  saveAgentOverrides,
   updateConfig,
 };

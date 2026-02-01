@@ -22,10 +22,17 @@ This bot stores a minimal JSON config with the values set by `/agent`.
 - `models` (optional): a map of agent id → model id, set via `/model`.
 - `cronChatId` (optional): Telegram chat id used for cron job messages. You can get it from `/cron chatid`.
 
-If the file is missing, all values are unset and the bot uses defaults.
+## Agent Overrides file (optional)
+When you use `/agent <name>` inside a Telegram Topic, the bot stores an override for that specific topic in:
+- `~/.config/aipal/agent-overrides.json`
+- If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/agent-overrides.json`
 
-## Environment variables
-- `ALLOWED_USERS` (optional): comma-separated list of Telegram user IDs allowed to use the bot. If unset/empty, the bot is open to everyone.
+Schema:
+```json
+{
+  "chatId:topicId": "agentId"
+}
+```
 
 ## Memory file (optional)
 If `memory.md` exists alongside `config.json`, its contents are injected into the very first prompt of a new conversation (i.e. when there is no active session/thread).

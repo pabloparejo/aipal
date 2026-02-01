@@ -18,16 +18,25 @@ const {
   CONFIG_PATH,
   MEMORY_PATH,
   SOUL_PATH,
+  AGENT_OVERRIDES_PATH,
+  loadAgentOverrides,
   loadThreads,
   readConfig,
   readMemory,
   readSoul,
+  saveAgentOverrides,
   saveThreads,
   updateConfig,
 } = require('./config-store');
 const {
-  buildThreadKey,
+  clearAgentOverride,
+  getAgentOverride,
+  setAgentOverride,
+} = require('./agent-overrides');
+const {
+  buildTopicKey,
   clearThreadForAgent,
+  normalizeTopicId,
   resolveThreadId,
 } = require('./thread-store');
 const {
@@ -146,6 +155,8 @@ if (allowedUsers.size > 0) {
 const queues = new Map();
 let threads = new Map();
 let threadsPersist = Promise.resolve();
+let agentOverrides = new Map();
+let agentOverridesPersist = Promise.resolve();
 const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalThinking;
@@ -288,6 +299,13 @@ function persistThreads() {
   return threadsPersist;
 }
 
+function persistAgentOverrides() {
+  agentOverridesPersist = agentOverridesPersist
+    .catch(() => {})
+    .then(() => saveAgentOverrides(agentOverrides));
+  return agentOverridesPersist;
+}
+
 async function buildBootstrapContext() {
   const soul = await readSoul();
   const memory = await readMemory();
@@ -428,11 +446,15 @@ function formatScriptContext(entry) {
   return `/${entry.name} output (truncated ${remaining} chars):\n${truncated}`;
 }
 
-function consumeScriptContext(chatId) {
-  const entry = lastScriptOutputs.get(chatId);
+function consumeScriptContext(topicKey) {
+  const entry = lastScriptOutputs.get(topicKey);
   if (!entry) return '';
-  lastScriptOutputs.delete(chatId);
+  lastScriptOutputs.delete(topicKey);
   return formatScriptContext(entry);
+}
+
+function getTopicId(ctx) {
+  return ctx?.message?.message_thread_id;
 }
 
 async function replyWithError(ctx, label, err) {
@@ -612,11 +634,15 @@ async function runAgentOneShot(prompt) {
 }
 
 async function runAgentForChat(chatId, prompt, options = {}) {
-  const agent = getAgent(globalAgent);
+  const { topicId } = options;
+  const effectiveAgentId = getAgentOverride(agentOverrides, chatId, topicId) || globalAgent;
+  const agent = getAgent(effectiveAgentId);
+
   const { threadKey, threadId, migrated } = resolveThreadId(
     threads,
     chatId,
-    globalAgent
+    topicId,
+    effectiveAgentId
   );
   if (migrated) {
     persistThreads().catch((err) => console.warn('Failed to persist migrated threads:', err));
@@ -650,7 +676,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     promptExpression,
     threadId,
     thinking,
-    model: globalModels[globalAgent],
+    model: globalModels[effectiveAgentId],
   });
   const command = [
     `PROMPT_B64=${shellQuote(promptBase64)};`,
@@ -667,7 +693,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
 
   const startedAt = Date.now();
   console.info(
-    `Agent start chat=${chatId} agent=${agent.id} thread=${threadId || 'new'}`
+    `Agent start chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} thread=${threadId || 'new'}`
   );
   let output;
   let execError;
@@ -685,7 +711,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     }
   } finally {
     const elapsedMs = Date.now() - startedAt;
-    console.info(`Agent finished chat=${chatId} durationMs=${elapsedMs}`);
+    console.info(`Agent finished chat=${chatId} topic=${topicId || 'root'} durationMs=${elapsedMs}`);
   }
   const parsed = agent.parseOutput(output);
   if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
@@ -693,7 +719,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   }
   if (execError) {
     console.warn(
-      `Agent exited non-zero; returning stdout chat=${chatId} code=${execError.code || 'unknown'}`
+      `Agent exited non-zero; returning stdout chat=${chatId} topic=${topicId || 'root'} code=${execError.code || 'unknown'}`
     );
   }
   if (!parsed.threadId && typeof agent.listSessionsCommand === 'function') {
@@ -723,9 +749,6 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   if (parsed.threadId) {
     threads.set(threadKey, parsed.threadId);
     persistThreads().catch((err) => console.warn('Failed to persist threads:', err));
-  }
-  if (parsed.sawJson) {
-    return parsed.text || output;
   }
   return parsed.text || output;
 }
@@ -825,31 +848,72 @@ bot.command('thinking', async (ctx) => {
 
 bot.command('agent', async (ctx) => {
   const value = extractCommandValue(ctx.message.text);
+  const topicId = getTopicId(ctx);
+  const normalizedTopic = normalizeTopicId(topicId);
+
   if (!value) {
-    ctx.reply(`Current agent: ${getAgentLabel(globalAgent)}. Use /agent codex|claude|gemini|opencode.`);
+    const effective =
+      getAgentOverride(agentOverrides, ctx.chat.id, topicId) || globalAgent;
+    ctx.reply(
+      `Current agent (${normalizedTopic}): ${getAgentLabel(
+        effective,
+      )}. Use /agent <name> or /agent default.`,
+    );
     return;
   }
+
+  if (value === 'default') {
+    if (normalizedTopic === 'root') {
+      ctx.reply('Already using global agent in root topic.');
+      return;
+    }
+    clearAgentOverride(agentOverrides, ctx.chat.id, topicId);
+    persistAgentOverrides().catch((err) =>
+      console.warn('Failed to persist agent overrides:', err),
+    );
+    ctx.reply(
+      `Agent override cleared for ${normalizedTopic}. Now using ${getAgentLabel(
+        globalAgent,
+      )}.`,
+    );
+    return;
+  }
+
   if (!isKnownAgent(value)) {
     ctx.reply('Unknown agent. Use /agent codex|claude|gemini|opencode.');
     return;
   }
-  const normalized = normalizeAgent(value);
-  try {
-    globalAgent = normalized;
-    await updateConfig({ agent: normalized });
-    ctx.reply(`Agent set to ${getAgentLabel(globalAgent)}.`);
-  } catch (err) {
-    console.error(err);
-    await replyWithError(ctx, 'Failed to persist agent setting.', err);
+
+  const normalizedAgent = normalizeAgent(value);
+  if (normalizedTopic === 'root') {
+    globalAgent = normalizedAgent;
+    try {
+      await updateConfig({ agent: normalizedAgent });
+      ctx.reply(`Global agent set to ${getAgentLabel(globalAgent)}.`);
+    } catch (err) {
+      console.error(err);
+      await replyWithError(ctx, 'Failed to persist global agent setting.', err);
+    }
+  } else {
+    setAgentOverride(agentOverrides, ctx.chat.id, topicId, normalizedAgent);
+    persistAgentOverrides().catch((err) =>
+      console.warn('Failed to persist agent overrides:', err),
+    );
+    ctx.reply(`Agent for this topic set to ${getAgentLabel(normalizedAgent)}.`);
   }
 });
 
 bot.command('reset', async (ctx) => {
-  clearThreadForAgent(threads, ctx.chat.id, globalAgent);
+  const topicId = getTopicId(ctx);
+  const effectiveAgentId =
+    getAgentOverride(agentOverrides, ctx.chat.id, topicId) || globalAgent;
+  clearThreadForAgent(threads, ctx.chat.id, topicId, effectiveAgentId);
   persistThreads().catch((err) =>
-    console.warn('Failed to persist threads after reset:', err)
+    console.warn('Failed to persist threads after reset:', err),
   );
-  ctx.reply('Session reset.');
+  ctx.reply(
+    `Session reset for ${getAgentLabel(effectiveAgentId)} in this topic.`,
+  );
 });
 
 bot.command('model', async (ctx) => {
@@ -944,6 +1008,8 @@ bot.command('cron', async (ctx) => {
 
 bot.on('text', (ctx) => {
   const chatId = ctx.chat.id;
+  const topicId = getTopicId(ctx);
+  const topicKey = buildTopicKey(chatId, topicId);
   const text = ctx.message.text.trim();
   if (!text) return;
 
@@ -981,7 +1047,10 @@ bot.on('text', (ctx) => {
             'Si una sección queda vacía, indícalo como "(Sin resultados)".',
             'Responde en español, directo y sin relleno.',
           ].join('\n');
-          const response = await runAgentForChat(chatId, prompt, { scriptContext });
+          const response = await runAgentForChat(chatId, prompt, {
+            topicId,
+            scriptContext,
+          });
           stopTyping();
           await replyWithResponse(ctx, response);
         } catch (err) {
@@ -996,7 +1065,7 @@ bot.on('text', (ctx) => {
       const stopTyping = startTyping(ctx);
       try {
         const output = await runScriptCommand(slash.name, slash.args);
-        lastScriptOutputs.set(chatId, { name: slash.name, output });
+        lastScriptOutputs.set(topicKey, { name: slash.name, output });
         stopTyping();
         await replyWithResponse(ctx, output);
       } catch (err) {
@@ -1011,8 +1080,11 @@ bot.on('text', (ctx) => {
   enqueue(chatId, async () => {
     const stopTyping = startTyping(ctx);
     try {
-      const scriptContext = consumeScriptContext(chatId);
-      const response = await runAgentForChat(chatId, text, { scriptContext });
+      const scriptContext = consumeScriptContext(topicKey);
+      const response = await runAgentForChat(chatId, text, {
+        topicId,
+        scriptContext,
+      });
       stopTyping();
       await replyWithResponse(ctx, response);
     } catch (err) {
@@ -1025,6 +1097,7 @@ bot.on('text', (ctx) => {
 
 bot.on(['voice', 'audio', 'document'], (ctx, next) => {
   const chatId = ctx.chat.id;
+  const topicId = getTopicId(ctx);
   const payload = getAudioPayload(ctx.message);
   if (!payload) return next();
 
@@ -1044,7 +1117,7 @@ bot.on(['voice', 'audio', 'document'], (ctx, next) => {
         await ctx.reply("I couldn't transcribe the audio.");
         return;
       }
-      const response = await runAgentForChat(chatId, text);
+      const response = await runAgentForChat(chatId, text, { topicId });
       await replyWithResponse(ctx, response);
     } catch (err) {
       console.error(err);
@@ -1052,7 +1125,7 @@ bot.on(['voice', 'audio', 'document'], (ctx, next) => {
         await replyWithError(
           ctx,
           "I can't find parakeet-mlx. Install it and try again.",
-          err
+          err,
         );
       } else {
         await replyWithError(ctx, 'Error processing audio.', err);
@@ -1067,6 +1140,7 @@ bot.on(['voice', 'audio', 'document'], (ctx, next) => {
 
 bot.on(['photo', 'document'], (ctx, next) => {
   const chatId = ctx.chat.id;
+  const topicId = getTopicId(ctx);
   const payload = getImagePayload(ctx.message);
   if (!payload) return next();
 
@@ -1082,6 +1156,7 @@ bot.on(['photo', 'document'], (ctx, next) => {
       const caption = (ctx.message.caption || '').trim();
       const prompt = caption || 'User sent an image.';
       const response = await runAgentForChat(chatId, prompt, {
+        topicId,
         imagePaths: [imagePath],
       });
       await replyWithResponse(ctx, response);
@@ -1096,6 +1171,7 @@ bot.on(['photo', 'document'], (ctx, next) => {
 
 bot.on('document', (ctx) => {
   const chatId = ctx.chat.id;
+  const topicId = getTopicId(ctx);
   if (getAudioPayload(ctx.message) || getImagePayload(ctx.message)) return;
   const payload = getDocumentPayload(ctx.message);
   if (!payload) return;
@@ -1112,6 +1188,7 @@ bot.on('document', (ctx) => {
       const caption = (ctx.message.caption || '').trim();
       const prompt = caption || 'User sent a document.';
       const response = await runAgentForChat(chatId, prompt, {
+        topicId,
         documentPaths: [documentPath],
       });
       await replyWithResponse(ctx, response);
@@ -1188,6 +1265,12 @@ loadThreads()
     console.info(`Loaded ${threads.size} thread(s) from disk`);
   })
   .catch((err) => console.warn('Failed to load threads:', err));
+loadAgentOverrides()
+  .then((loaded) => {
+    agentOverrides = loaded;
+    console.info(`Loaded ${agentOverrides.size} agent override(s) from disk`);
+  })
+  .catch((err) => console.warn('Failed to load agent overrides:', err));
 hydrateGlobalSettings()
   .then((config) => {
     if (config.cronChatId) {

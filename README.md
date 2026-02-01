@@ -43,12 +43,22 @@ Open Telegram, send `/start`, then any message.
 - Documents: send a file (caption becomes the prompt)
 - `/reset`: clear the current agent session (drops the stored session id for this agent)
 - `/thinking <level>`: set reasoning effort (mapped to `model_reasoning_effort`) for this session
-- `/agent <codex|claude|gemini|opencode>`: set the CLI agent (persisted in `config.json`)
+- `/agent <name>`: set the CLI agent
+    - In root: sets global agent (persisted in `config.json`)
+    - In a topic: sets an override for this topic (persisted in `agent-overrides.json`)
+- `/agent default`: clear agent override for the current topic and return to global agent
+- `/reset`: clear the current agent session for this topic (drops the stored session id for this agent)
 - `/model [model_id]`: view/set the model for the current agent (persisted in `config.json`)
 - `/cron [list|reload|chatid]`: manage cron jobs (see below)
 - `/help`: list available commands and scripts
 - `/document_scripts confirm`: generate short descriptions for scripts (writes `scripts.json`; requires `ALLOWED_USERS`)
 - `/<script> [args]`: run an executable script from `~/.config/aipal/scripts`
+
+### Telegram Topics
+Aipal supports Telegram Topics. Sessions and agent overrides are kept per-topic.
+- Messages in the main chat ("root") have their own sessions.
+- Messages in any topic thread have their own independent sessions.
+- You can set a different agent for each topic using `/agent <name>`.
 
 ### Cron jobs
 Cron jobs are loaded from `~/.config/aipal/cron.json` (or `$XDG_CONFIG_HOME/aipal/cron.json`) and are sent to a single Telegram chat (the `cronChatId` configured in `config.json`).
