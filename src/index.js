@@ -634,8 +634,8 @@ async function runAgentOneShot(prompt) {
 }
 
 async function runAgentForChat(chatId, prompt, options = {}) {
-  const { topicId } = options;
-  const effectiveAgentId = getAgentOverride(agentOverrides, chatId, topicId) || globalAgent;
+  const { topicId, agentId: overrideAgentId } = options;
+  const effectiveAgentId = overrideAgentId || getAgentOverride(agentOverrides, chatId, topicId) || globalAgent;
   const agent = getAgent(effectiveAgentId);
 
   const { threadKey, threadId, migrated } = resolveThreadId(
@@ -1234,11 +1234,12 @@ async function sendResponseToChat(chatId, response) {
 }
 
 async function handleCronTrigger(chatId, prompt, options = {}) {
-  const { jobId } = options;
-  console.info(`Cron job ${jobId} executing for chat ${chatId}`);
+  const { jobId, agent } = options;
+  console.info(`Cron job ${jobId} executing for chat ${chatId}${agent ? ` (agent: ${agent})` : ''}`);
   try {
     await bot.telegram.sendChatAction(chatId, 'typing');
-    const response = await runAgentForChat(chatId, prompt);
+    const response = await runAgentForChat(chatId, prompt, { agentId: agent });
+    if (response.trim() === 'HEARTBEAT_OK') return;
     await sendResponseToChat(chatId, response);
   } catch (err) {
     console.error(`Cron job ${jobId} failed:`, err);
