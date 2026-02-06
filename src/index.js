@@ -132,7 +132,7 @@ const FILE_INSTRUCTIONS_EVERY = readNumberEnv(
 );
 const SHUTDOWN_DRAIN_TIMEOUT_MS = readNumberEnv(
   process.env.AIPAL_SHUTDOWN_DRAIN_TIMEOUT_MS,
-  15000
+  120000
 );
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
