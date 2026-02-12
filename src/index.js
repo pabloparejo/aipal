@@ -47,6 +47,10 @@ const {
   getThreadTail,
 } = require('./memory-store');
 const {
+  buildMemoryRetrievalContext,
+  searchMemory,
+} = require('./memory-retrieval');
+const {
   loadCronJobs,
   saveCronJobs,
   startCronScheduler,
@@ -145,6 +149,10 @@ const MEMORY_CURATE_EVERY = readNumberEnv(
   process.env.AIPAL_MEMORY_CURATE_EVERY,
   20
 );
+const MEMORY_RETRIEVAL_LIMIT = readNumberEnv(
+  process.env.AIPAL_MEMORY_RETRIEVAL_LIMIT,
+  8
+);
 const SHUTDOWN_DRAIN_TIMEOUT_MS = readNumberEnv(
   process.env.AIPAL_SHUTDOWN_DRAIN_TIMEOUT_MS,
   120000
@@ -196,7 +204,7 @@ bot.command('help', async (ctx) => {
     '/agent <name> - Switch agent (codex, claude, gemini, opencode)',
     '/thinking <level> - Set reasoning effort',
     '/model [model_id] - View/set model for current agent',
-    '/memory [status|tail|curate] - Memory capture + curation',
+    '/memory [status|tail|search|curate] - Memory capture + retrieval + curation',
     '/reset - Reset current agent session',
     '/cron [list|reload|chatid] - Manage cron jobs',
     '/help - Show this help',
@@ -759,6 +767,18 @@ async function runAgentForChat(chatId, prompt, options = {}) {
       ? `${bootstrap}\n\n${promptWithContext}`
       : bootstrap;
   }
+  const retrievalContext = await buildMemoryRetrievalContext({
+    query: prompt,
+    chatId,
+    topicId,
+    agentId: effectiveAgentId,
+    limit: MEMORY_RETRIEVAL_LIMIT,
+  });
+  if (retrievalContext) {
+    promptWithContext = promptWithContext
+      ? `${promptWithContext}\n\n${retrievalContext}`
+      : retrievalContext;
+  }
   const thinking = globalThinking;
   const finalPrompt = buildPrompt(
     promptWithContext,
@@ -1230,6 +1250,42 @@ bot.command('memory', async (ctx) => {
     return;
   }
 
+  if (subcommand === 'search') {
+    const query = parts.slice(1).join(' ').trim();
+    if (!query) {
+      await ctx.reply('Usage: /memory search <query>');
+      return;
+    }
+    const parsedLimit = Number(parts[parts.length - 1]);
+    const limit = Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(20, Math.trunc(parsedLimit)))
+      : MEMORY_RETRIEVAL_LIMIT;
+    try {
+      const hits = await searchMemory({
+        query,
+        chatId,
+        topicId,
+        agentId: effectiveAgentId,
+        limit,
+      });
+      if (!hits.length) {
+        await ctx.reply('No relevant memory found for that query.');
+        return;
+      }
+      const lines = hits.map((hit) => {
+        const ts = String(hit.createdAt || '').replace('T', ' ').slice(0, 16);
+        const who = hit.role === 'assistant' ? 'assistant' : 'user';
+        const text = String(hit.text || '').replace(/\s+/g, ' ').trim();
+        const score = Number(hit.score || 0).toFixed(2);
+        return `- [${ts}] (${hit.scope}, ${who}, score=${score}) ${text}`;
+      });
+      await ctx.reply(lines.join('\n'));
+    } catch (err) {
+      await replyWithError(ctx, 'Memory search failed.', err);
+    }
+    return;
+  }
+
   if (subcommand === 'curate') {
     enqueue(`${topicKey}:memory-curate`, async () => {
       const stopTyping = startTyping(ctx);
@@ -1254,7 +1310,7 @@ bot.command('memory', async (ctx) => {
     return;
   }
 
-  await ctx.reply('Usage: /memory [status|tail [n]|curate]');
+  await ctx.reply('Usage: /memory [status|tail [n]|search <query>|curate]');
 });
 
 bot.on('text', (ctx) => {

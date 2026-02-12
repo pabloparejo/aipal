@@ -49,7 +49,7 @@ Open Telegram, send `/start`, then any message.
 - `/agent default`: clear agent override for the current topic and return to global agent
 - `/reset`: clear the current agent session for this topic (drops the stored session id for this agent)
 - `/model [model_id]`: view/set the model for the current agent (persisted in `config.json`)
-- `/memory [status|tail [n]|curate]`: inspect and curate automatic memory
+- `/memory [status|tail [n]|search <query>|curate]`: inspect, search, and curate automatic memory
 - `/cron [list|reload|chatid]`: manage cron jobs (see below)
 - `/help`: list available commands and scripts
 - `/document_scripts confirm`: generate short descriptions for scripts (writes `scripts.json`; requires `ALLOWED_USERS`)
@@ -108,6 +108,7 @@ Optional:
 - `AIPAL_SCRIPTS_DIR`: directory for slash scripts (default: `~/.config/aipal/scripts`)
 - `AIPAL_SCRIPT_TIMEOUT_MS`: timeout for slash scripts (default: 120000)
 - `AIPAL_MEMORY_CURATE_EVERY`: auto-curate memory after N captured events (default: 20)
+- `AIPAL_MEMORY_RETRIEVAL_LIMIT`: max retrieved memory lines injected per request (default: 8)
 - `ALLOWED_USERS`: comma-separated list of Telegram user IDs allowed to interact with the bot (if unset/empty, bot is open to everyone)
 
 ## Config file (optional)
@@ -134,7 +135,8 @@ Location:
 - Every interaction is captured automatically in per-thread files under `~/.config/aipal/memory/threads/*.jsonl` (or `$XDG_CONFIG_HOME/aipal/memory/threads/*.jsonl`).
 - Memory is isolated by `chatId:topicId:agentId` to avoid collisions across agents and topics.
 - `memory.md` remains the global curated memory. The bot can curate it automatically and via `/memory curate`.
-- `/memory status` shows memory health, `/memory tail` shows recent events for the current conversation.
+- Retrieval (iteration 1): lexical + recency retrieval over captured thread events is injected into prompts automatically.
+- `/memory status` shows memory health, `/memory tail` shows recent events, `/memory search` lets you inspect retrieval hits.
 
 ## Security notes
 This bot executes local commands on your machine. Run it only on trusted hardware, keep the bot private, and avoid sharing the token.

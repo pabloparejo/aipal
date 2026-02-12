@@ -55,6 +55,7 @@ Curated memory state is stored in:
 
 Environment knobs:
 - `AIPAL_MEMORY_CURATE_EVERY`: auto-curate memory after N new captured events (default: `20`).
+- `AIPAL_MEMORY_RETRIEVAL_LIMIT`: maximum number of retrieved memory lines injected per request (default: `8`).
 
 ## Soul file (optional)
 If `soul.md` exists alongside `config.json`, its contents are injected into the very first prompt of a new conversation, before `memory.md`.
