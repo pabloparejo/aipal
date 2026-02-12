@@ -834,15 +834,15 @@ async function replyWithTranscript(ctx, transcript, replyToMessageId) {
   }
 }
 
-function enqueue(chatId, fn) {
-  const prev = queues.get(chatId) || Promise.resolve();
+function enqueue(queueKey, fn) {
+  const prev = queues.get(queueKey) || Promise.resolve();
   const next = prev.then(fn).catch((err) => {
     console.error('Queue error', err);
   });
-  queues.set(chatId, next);
+  queues.set(queueKey, next);
   next.finally(() => {
-    if (queues.get(chatId) === next) {
-      queues.delete(chatId);
+    if (queues.get(queueKey) === next) {
+      queues.delete(queueKey);
     }
   });
   return next;
@@ -1108,7 +1108,7 @@ bot.on('text', (ctx) => {
     ) {
       return;
     }
-    enqueue(chatId, async () => {
+    enqueue(topicKey, async () => {
       const stopTyping = startTyping(ctx);
       try {
         let scriptMeta = {};
@@ -1146,7 +1146,7 @@ bot.on('text', (ctx) => {
     return;
   }
 
-  enqueue(chatId, async () => {
+  enqueue(topicKey, async () => {
     const stopTyping = startTyping(ctx);
     try {
       const scriptContext = consumeScriptContext(topicKey);
@@ -1167,10 +1167,11 @@ bot.on('text', (ctx) => {
 bot.on(['voice', 'audio', 'document'], (ctx, next) => {
   const chatId = ctx.chat.id;
   const topicId = getTopicId(ctx);
+  const topicKey = buildTopicKey(chatId, topicId);
   const payload = getAudioPayload(ctx.message);
   if (!payload) return next();
 
-  enqueue(chatId, async () => {
+  enqueue(topicKey, async () => {
     const stopTyping = startTyping(ctx);
     let audioPath;
     let transcriptPath;
@@ -1210,10 +1211,11 @@ bot.on(['voice', 'audio', 'document'], (ctx, next) => {
 bot.on(['photo', 'document'], (ctx, next) => {
   const chatId = ctx.chat.id;
   const topicId = getTopicId(ctx);
+  const topicKey = buildTopicKey(chatId, topicId);
   const payload = getImagePayload(ctx.message);
   if (!payload) return next();
 
-  enqueue(chatId, async () => {
+  enqueue(topicKey, async () => {
     const stopTyping = startTyping(ctx);
     let imagePath;
     try {
@@ -1241,11 +1243,12 @@ bot.on(['photo', 'document'], (ctx, next) => {
 bot.on('document', (ctx) => {
   const chatId = ctx.chat.id;
   const topicId = getTopicId(ctx);
+  const topicKey = buildTopicKey(chatId, topicId);
   if (getAudioPayload(ctx.message) || getImagePayload(ctx.message)) return;
   const payload = getDocumentPayload(ctx.message);
   if (!payload) return;
 
-  enqueue(chatId, async () => {
+  enqueue(topicKey, async () => {
     const stopTyping = startTyping(ctx);
     let documentPath;
     try {
