@@ -176,11 +176,25 @@ function createCodexSdkRuntime(options = {}) {
     logger = console,
     createClient,
     verbose = false,
+    threadDefaults = {},
   } = options;
 
   const normalizedTimeoutMs = parsePositiveNumber(timeoutMs, 0);
+  const normalizedThreadDefaults = {
+    sandboxMode: 'danger-full-access',
+    approvalPolicy: 'never',
+    skipGitRepoCheck: true,
+    ...threadDefaults,
+  };
   const threadCache = new Map();
   let clientPromise = null;
+
+  function buildThreadOptions(input = {}) {
+    const threadOptions = { ...normalizedThreadDefaults };
+    if (input.model) threadOptions.model = input.model;
+    if (input.thinking) threadOptions.modelReasoningEffort = input.thinking;
+    return threadOptions;
+  }
 
   async function getClient() {
     if (!clientPromise) {
@@ -201,7 +215,7 @@ function createCodexSdkRuntime(options = {}) {
     return clientPromise;
   }
 
-  async function resumeThread(client, threadId) {
+  async function resumeThread(client, threadId, threadOptions) {
     if (!threadId) return null;
     if (threadCache.has(threadId)) {
       return threadCache.get(threadId);
@@ -216,7 +230,7 @@ function createCodexSdkRuntime(options = {}) {
 
     for (const resume of resumeCandidates) {
       try {
-        const thread = await resume.call(client, threadId);
+        const thread = await resume.call(client, threadId, threadOptions);
         threadCache.set(threadId, thread);
         return thread;
       } catch (err) {
@@ -229,7 +243,7 @@ function createCodexSdkRuntime(options = {}) {
     return null;
   }
 
-  async function startThread(client) {
+  async function startThread(client, threadOptions) {
     const starters = [
       client.startThread,
       client.createThread,
@@ -243,7 +257,7 @@ function createCodexSdkRuntime(options = {}) {
     }
 
     for (const starter of starters) {
-      const thread = await starter.call(client);
+      const thread = await starter.call(client, threadOptions);
       const threadId = normalizeThreadId(undefined, thread);
       if (threadId) {
         threadCache.set(threadId, thread);
@@ -265,10 +279,11 @@ function createCodexSdkRuntime(options = {}) {
     } = input;
 
     const client = await getClient();
-    let thread = await resumeThread(client, threadId);
+    const threadOptions = buildThreadOptions({ model, thinking });
+    let thread = await resumeThread(client, threadId, threadOptions);
     let resumed = Boolean(thread);
     if (!thread) {
-      thread = await startThread(client);
+      thread = await startThread(client, threadOptions);
       resumed = false;
     }
 

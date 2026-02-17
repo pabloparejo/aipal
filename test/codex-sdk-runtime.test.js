@@ -99,3 +99,51 @@ test('sdk runtime throws timeout error when run takes too long', async () => {
     (err) => err && err.code === 'AIPAL_CODEX_SDK_TIMEOUT'
   );
 });
+
+test('sdk runtime applies yolo-equivalent thread defaults on start/resume', async () => {
+  const startCalls = [];
+  const resumeCalls = [];
+  const runtime = createCodexSdkRuntime({
+    createClient: async () => ({
+      resumeThread: async (threadId, options) => {
+        resumeCalls.push({ threadId, options });
+        throw new Error('force start');
+      },
+      startThread: async (options) => {
+        startCalls.push(options);
+        return {
+          id: () => 't-yolo',
+          run: async () => ({ text: 'ok' }),
+        };
+      },
+    }),
+    timeoutMs: 1000,
+  });
+
+  const result = await runtime.run({
+    prompt: 'hello',
+    threadId: 'stale-thread',
+    model: 'gpt-5',
+    thinking: 'medium',
+  });
+  assert.equal(result.threadId, 't-yolo');
+
+  assert.equal(resumeCalls.length, 1);
+  assert.equal(resumeCalls[0].threadId, 'stale-thread');
+  assert.deepEqual(resumeCalls[0].options, {
+    sandboxMode: 'danger-full-access',
+    approvalPolicy: 'never',
+    skipGitRepoCheck: true,
+    model: 'gpt-5',
+    modelReasoningEffort: 'medium',
+  });
+
+  assert.equal(startCalls.length, 1);
+  assert.deepEqual(startCalls[0], {
+    sandboxMode: 'danger-full-access',
+    approvalPolicy: 'never',
+    skipGitRepoCheck: true,
+    model: 'gpt-5',
+    modelReasoningEffort: 'medium',
+  });
+});

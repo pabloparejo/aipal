@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
   - `AIPAL_CODEX_SDK_TIMEOUT_MS` (defaults to `AIPAL_AGENT_TIMEOUT_MS`)
   - `AIPAL_CODEX_SDK_LOG_VERBOSE=true|false` (default `false`)
 - In `auto` mode, codex now runs through SDK first and falls back to existing CLI flow on SDK/runtime failures.
+- SDK threads now default to YOLO-equivalent permissions (`sandboxMode=danger-full-access`, `approvalPolicy=never`, `skipGitRepoCheck=true`) to match prior CLI behavior.
 - Non-codex agents (`claude`, `gemini`, `opencode`) continue using current CLI adapters unchanged.
 - Thread continuity remains compatible with existing `threads.json` storage and key format.
 
