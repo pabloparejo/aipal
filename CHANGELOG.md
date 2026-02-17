@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2026-02-17
+### Added
+- Codex SDK runtime integration (`@openai/codex-sdk`) for in-process execution.
+- Runtime abstraction modules under `src/runtimes/`:
+  - `codex-sdk-runtime`
+  - `codex-cli-runtime`
+  - `runtime-factory`
+  - `runtime-types`
+- Runtime-focused tests for SDK behavior, selection matrix, and fallback handling.
+- Migration tracking document: `docs/codex-sdk-migration-plan.md`.
+
+### Changed
+- Codex execution path now supports feature-flagged runtime selection:
+  - `AIPAL_CODEX_RUNTIME=auto|sdk|cli` (default `auto`)
+  - `AIPAL_CODEX_SDK_FALLBACK=true|false` (default `true`)
+  - `AIPAL_CODEX_SDK_TIMEOUT_MS` (defaults to `AIPAL_AGENT_TIMEOUT_MS`)
+  - `AIPAL_CODEX_SDK_LOG_VERBOSE=true|false` (default `false`)
+- In `auto` mode, codex now runs through SDK first and falls back to existing CLI flow on SDK/runtime failures.
+- Non-codex agents (`claude`, `gemini`, `opencode`) continue using current CLI adapters unchanged.
+- Thread continuity remains compatible with existing `threads.json` storage and key format.
+
+### Documentation
+- Updated runtime/environment documentation in `README.md` and `docs/configuration.md`.
+- Updated `.env.example` with codex runtime flags and defaults.
+
 ## [0.2.1] - 2026-02-12
 ### Added
 - Automatic memory capture per conversation/agent into `memory/threads/*.jsonl`.
