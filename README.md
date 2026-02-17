@@ -109,6 +109,10 @@ Optional:
 - `AIPAL_SCRIPT_TIMEOUT_MS`: timeout for slash scripts (default: 120000)
 - `AIPAL_MEMORY_CURATE_EVERY`: auto-curate memory after N captured events (default: 20)
 - `AIPAL_MEMORY_RETRIEVAL_LIMIT`: max retrieved memory lines injected per request (default: 8)
+- `AIPAL_CODEX_RUNTIME`: codex runtime strategy (`auto`, `sdk`, `cli`; default: `auto`)
+- `AIPAL_CODEX_SDK_FALLBACK`: in `auto` mode, fallback to CLI if SDK fails (default: `true`)
+- `AIPAL_CODEX_SDK_TIMEOUT_MS`: SDK timeout override in ms (default: `AIPAL_AGENT_TIMEOUT_MS`)
+- `AIPAL_CODEX_SDK_LOG_VERBOSE`: verbose SDK logging (`true`/`false`, default: `false`)
 - `ALLOWED_USERS`: comma-separated list of Telegram user IDs allowed to interact with the bot (if unset/empty, bot is open to everyone)
 
 ## Config file (optional)
@@ -146,8 +150,9 @@ To restrict access, set `ALLOWED_USERS` in `.env` to a comma-separated list of T
 
 ## How it works
 - Builds a shell command with a base64-encoded prompt to avoid quoting issues
-- Executes the command locally via `bash -lc`
-- If the agent outputs Codex-style JSON, stores `thread_id` and uses `exec resume`
+- For `codex`: uses Codex SDK in-process when enabled (`AIPAL_CODEX_RUNTIME=auto|sdk`), with optional CLI fallback in `auto`
+- For non-codex agents (or `AIPAL_CODEX_RUNTIME=cli`): executes the command locally via `bash -lc`
+- Stores per-topic session/thread IDs and reuses them across messages
 - Audio is downloaded, transcribed, then forwarded as text
 - Images are downloaded into the image folder and included in the prompt
 

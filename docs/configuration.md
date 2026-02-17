@@ -60,6 +60,10 @@ Curated memory state is stored in:
 Environment knobs:
 - `AIPAL_MEMORY_CURATE_EVERY`: auto-curate memory after N new captured events (default: `20`).
 - `AIPAL_MEMORY_RETRIEVAL_LIMIT`: maximum number of retrieved memory lines injected per request (default: `8`).
+- `AIPAL_CODEX_RUNTIME`: runtime strategy for codex (`auto`, `sdk`, `cli`; default: `auto`).
+- `AIPAL_CODEX_SDK_FALLBACK`: in `auto`, fallback to CLI when SDK fails (default: `true`).
+- `AIPAL_CODEX_SDK_TIMEOUT_MS`: SDK timeout in milliseconds (default: `AIPAL_AGENT_TIMEOUT_MS`).
+- `AIPAL_CODEX_SDK_LOG_VERBOSE`: verbose SDK runtime warnings (`true` or `false`, default: `false`).
 
 Retrieval currently mixes scopes (`same-thread`, `same-topic`, `same-chat`, `global`) so prompts can include both local continuity and useful cross-topic memory when available.
 

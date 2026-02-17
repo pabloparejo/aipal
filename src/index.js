@@ -76,6 +76,7 @@ const {
   createAccessControlMiddleware,
   parseAllowedUsersEnv,
 } = require('./access-control');
+const { createCodexRuntimeManager } = require('./runtimes/runtime-factory');
 
 const { ScriptManager } = require('./script-manager');
 const { prefixTextWithTimestamp, DEFAULT_TIME_ZONE } = require('./time-utils');
@@ -141,6 +142,9 @@ const AGENT_MAX_BUFFER = readNumberEnv(
   process.env.AIPAL_AGENT_MAX_BUFFER,
   10 * 1024 * 1024
 );
+const CODEX_RUNTIME_MODE = String(process.env.AIPAL_CODEX_RUNTIME || 'auto')
+  .trim()
+  .toLowerCase();
 const FILE_INSTRUCTIONS_EVERY = readNumberEnv(
   process.env.AIPAL_FILE_INSTRUCTIONS_EVERY,
   10
@@ -197,6 +201,21 @@ let globalAgent = AGENT_CODEX;
 let globalModels = {};
 
 const scriptManager = new ScriptManager(SCRIPTS_DIR);
+const codexRuntimeManager = createCodexRuntimeManager({
+  env: process.env,
+  codexAgent: getAgent(AGENT_CODEX),
+  execLocal,
+  wrapCommandWithPty,
+  shellQuote,
+  agentTimeoutMs: AGENT_TIMEOUT_MS,
+  agentMaxBuffer: AGENT_MAX_BUFFER,
+  logger: console,
+});
+console.info(
+  `Codex runtime mode=${CODEX_RUNTIME_MODE || 'auto'} fallback=${
+    codexRuntimeManager.sdkFallbackEnabled ? 'enabled' : 'disabled'
+  }`
+);
 
 bot.command('help', async (ctx) => {
   const builtIn = [
@@ -677,60 +696,76 @@ async function runAgentOneShot(prompt) {
   if (agent.id === 'claude') {
     promptText = prefixTextWithTimestamp(promptText, { timeZone: DEFAULT_TIME_ZONE });
   }
-  const promptBase64 = Buffer.from(promptText, 'utf8').toString('base64');
-  const promptExpression = '"$PROMPT"';
-  const agentCmd = agent.buildCommand({
-    prompt: promptText,
-    promptExpression,
-    threadId: undefined,
-    thinking,
-  });
-
-  const command = [
-    `PROMPT_B64=${shellQuote(promptBase64)};`,
-    'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
-    `${agentCmd}`,
-  ].join(' ');
-
-  let commandToRun = command;
-  if (agent.needsPty) {
-    commandToRun = wrapCommandWithPty(commandToRun);
-  }
-  if (agent.mergeStderr) {
-    commandToRun = `${commandToRun} 2>&1`;
-  }
 
   const startedAt = Date.now();
   console.info(`Agent one-shot start agent=${getAgentLabel(globalAgent)}`);
-  let output;
-  let execError;
   try {
-    output = await execLocal('bash', ['-lc', commandToRun], {
-      timeout: AGENT_TIMEOUT_MS,
-      maxBuffer: AGENT_MAX_BUFFER,
-    });
-  } catch (err) {
-    execError = err;
-    if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
-      output = err.stdout;
-    } else {
-      throw err;
+    if (agent.id === AGENT_CODEX) {
+      const result = await codexRuntimeManager.run({
+        prompt: promptText,
+        threadId: undefined,
+        thinking,
+        model: globalModels[AGENT_CODEX],
+      });
+      console.info(
+        `Agent one-shot runtime=${result.runtime} fallback=${result.fallback ? 'true' : 'false'}`
+      );
+      return result.text || '(no response)';
     }
+
+    const promptBase64 = Buffer.from(promptText, 'utf8').toString('base64');
+    const promptExpression = '"$PROMPT"';
+    const agentCmd = agent.buildCommand({
+      prompt: promptText,
+      promptExpression,
+      threadId: undefined,
+      thinking,
+    });
+
+    const command = [
+      `PROMPT_B64=${shellQuote(promptBase64)};`,
+      'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
+      `${agentCmd}`,
+    ].join(' ');
+
+    let commandToRun = command;
+    if (agent.needsPty) {
+      commandToRun = wrapCommandWithPty(commandToRun);
+    }
+    if (agent.mergeStderr) {
+      commandToRun = `${commandToRun} 2>&1`;
+    }
+
+    let output;
+    let execError;
+    try {
+      output = await execLocal('bash', ['-lc', commandToRun], {
+        timeout: AGENT_TIMEOUT_MS,
+        maxBuffer: AGENT_MAX_BUFFER,
+      });
+    } catch (err) {
+      execError = err;
+      if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
+        output = err.stdout;
+      } else {
+        throw err;
+      }
+    }
+
+    const parsed = agent.parseOutput(output);
+    if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
+      throw execError;
+    }
+    if (execError) {
+      console.warn(
+        `Agent one-shot exited non-zero; returning stdout (code=${execError.code || 'unknown'})`
+      );
+    }
+    return parsed.text || output;
   } finally {
     const elapsedMs = Date.now() - startedAt;
     console.info(`Agent one-shot finished durationMs=${elapsedMs}`);
   }
-
-  const parsed = agent.parseOutput(output);
-  if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
-    throw execError;
-  }
-  if (execError) {
-    console.warn(
-      `Agent one-shot exited non-zero; returning stdout (code=${execError.code || 'unknown'})`
-    );
-  }
-  return parsed.text || output;
 }
 
 async function runAgentForChat(chatId, prompt, options = {}) {
@@ -789,88 +824,109 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     DOCUMENT_DIR,
     { includeFileInstructions: shouldIncludeFileInstructions }
   );
-  const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
-  const promptExpression = '"$PROMPT"';
-  const agentCmd = agent.buildCommand({
-    prompt: finalPrompt,
-    promptExpression,
-    threadId,
-    thinking,
-    model: globalModels[effectiveAgentId],
-  });
-  const command = [
-    `PROMPT_B64=${shellQuote(promptBase64)};`,
-    'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
-    `${agentCmd}`,
-  ].join(' ');
-  let commandToRun = command;
-  if (agent.needsPty) {
-    commandToRun = wrapCommandWithPty(commandToRun);
-  }
-  if (agent.mergeStderr) {
-    commandToRun = `${commandToRun} 2>&1`;
-  }
-
   const startedAt = Date.now();
   console.info(
     `Agent start chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} thread=${threadId || 'new'}`
   );
-  let output;
-  let execError;
   try {
-    output = await execLocal('bash', ['-lc', commandToRun], {
-      timeout: AGENT_TIMEOUT_MS,
-      maxBuffer: AGENT_MAX_BUFFER,
-    });
-  } catch (err) {
-    execError = err;
-    if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
-      output = err.stdout;
-    } else {
-      throw err;
+    if (agent.id === AGENT_CODEX) {
+      const result = await codexRuntimeManager.run({
+        prompt: finalPrompt,
+        threadId,
+        thinking,
+        model: globalModels[effectiveAgentId],
+      });
+      console.info(
+        `Agent runtime chat=${chatId} topic=${topicId || 'root'} runtime=${result.runtime} fallback=${result.fallback ? 'true' : 'false'}`
+      );
+      if (result.threadId) {
+        threads.set(threadKey, result.threadId);
+        persistThreads().catch((err) =>
+          console.warn('Failed to persist threads:', err)
+        );
+      }
+      return result.text || '';
     }
+
+    const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
+    const promptExpression = '"$PROMPT"';
+    const agentCmd = agent.buildCommand({
+      prompt: finalPrompt,
+      promptExpression,
+      threadId,
+      thinking,
+      model: globalModels[effectiveAgentId],
+    });
+    const command = [
+      `PROMPT_B64=${shellQuote(promptBase64)};`,
+      'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
+      `${agentCmd}`,
+    ].join(' ');
+    let commandToRun = command;
+    if (agent.needsPty) {
+      commandToRun = wrapCommandWithPty(commandToRun);
+    }
+    if (agent.mergeStderr) {
+      commandToRun = `${commandToRun} 2>&1`;
+    }
+
+    let output;
+    let execError;
+    try {
+      output = await execLocal('bash', ['-lc', commandToRun], {
+        timeout: AGENT_TIMEOUT_MS,
+        maxBuffer: AGENT_MAX_BUFFER,
+      });
+    } catch (err) {
+      execError = err;
+      if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
+        output = err.stdout;
+      } else {
+        throw err;
+      }
+    }
+    const parsed = agent.parseOutput(output);
+    if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
+      throw execError;
+    }
+    if (execError) {
+      console.warn(
+        `Agent exited non-zero; returning stdout chat=${chatId} topic=${topicId || 'root'} code=${execError.code || 'unknown'}`
+      );
+    }
+    if (!parsed.threadId && typeof agent.listSessionsCommand === 'function') {
+      try {
+        const listCommand = agent.listSessionsCommand();
+        let listCommandToRun = listCommand;
+        if (agent.needsPty) {
+          listCommandToRun = wrapCommandWithPty(listCommandToRun);
+        }
+        if (agent.mergeStderr) {
+          listCommandToRun = `${listCommandToRun} 2>&1`;
+        }
+        const listOutput = await execLocal('bash', ['-lc', listCommandToRun], {
+          timeout: AGENT_TIMEOUT_MS,
+          maxBuffer: AGENT_MAX_BUFFER,
+        });
+        if (typeof agent.parseSessionList === 'function') {
+          const resolved = agent.parseSessionList(listOutput);
+          if (resolved) {
+            parsed.threadId = resolved;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to resolve agent session id:', err?.message || err);
+      }
+    }
+    if (parsed.threadId) {
+      threads.set(threadKey, parsed.threadId);
+      persistThreads().catch((err) => console.warn('Failed to persist threads:', err));
+    }
+    return parsed.text || output;
   } finally {
     const elapsedMs = Date.now() - startedAt;
     console.info(`Agent finished chat=${chatId} topic=${topicId || 'root'} durationMs=${elapsedMs}`);
   }
-  const parsed = agent.parseOutput(output);
-  if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
-    throw execError;
-  }
-  if (execError) {
-    console.warn(
-      `Agent exited non-zero; returning stdout chat=${chatId} topic=${topicId || 'root'} code=${execError.code || 'unknown'}`
-    );
-  }
-  if (!parsed.threadId && typeof agent.listSessionsCommand === 'function') {
-    try {
-      const listCommand = agent.listSessionsCommand();
-      let listCommandToRun = listCommand;
-      if (agent.needsPty) {
-        listCommandToRun = wrapCommandWithPty(listCommandToRun);
-      }
-      if (agent.mergeStderr) {
-        listCommandToRun = `${listCommandToRun} 2>&1`;
-      }
-      const listOutput = await execLocal('bash', ['-lc', listCommandToRun], {
-        timeout: AGENT_TIMEOUT_MS,
-        maxBuffer: AGENT_MAX_BUFFER,
-      });
-      if (typeof agent.parseSessionList === 'function') {
-        const resolved = agent.parseSessionList(listOutput);
-        if (resolved) {
-          parsed.threadId = resolved;
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to resolve agent session id:', err?.message || err);
-    }
-  }
-  if (parsed.threadId) {
-    threads.set(threadKey, parsed.threadId);
-    persistThreads().catch((err) => console.warn('Failed to persist threads:', err));
-  }
-  return parsed.text || output;
 }
 
 async function replyWithResponse(ctx, response) {
